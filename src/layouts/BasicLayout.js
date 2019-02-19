@@ -17,6 +17,9 @@ import Context from './MenuContext';
 import Exception403 from '../pages/Exception/403';
 import PageLoading from '@/components/PageLoading';
 import SiderMenu from '@/components/SiderMenu';
+import { menu, title } from '../defaultSettings';
+
+import styles from './BasicLayout.less';
 
 // lazy load SettingDrawer
 const SettingDrawer = React.lazy(() => import('@/components/SettingDrawer'));
@@ -48,12 +51,10 @@ const query = {
   },
 };
 
-class BasicLayout extends React.PureComponent {
+class BasicLayout extends React.Component {
   constructor(props) {
     super(props);
     this.getPageTitle = memoizeOne(this.getPageTitle);
-    this.getBreadcrumbNameMap = memoizeOne(this.getBreadcrumbNameMap, isEqual);
-    this.breadcrumbNameMap = this.getBreadcrumbNameMap();
     this.matchParamsPath = memoizeOne(this.matchParamsPath, isEqual);
   }
 
@@ -74,62 +75,56 @@ class BasicLayout extends React.PureComponent {
     });
   }
 
-  componentDidUpdate(preProps) {
-    // After changing to phone mode,
-    // if collapsed is true, you need to click twice to display
-    this.breadcrumbNameMap = this.getBreadcrumbNameMap();
-    const { collapsed, isMobile } = this.props;
-    if (isMobile && !preProps.isMobile && !collapsed) {
-      this.handleMenuCollapse(false);
-    }
-  }
-
   getContext() {
-    const { location } = this.props;
+    const { location, breadcrumbNameMap } = this.props;
     return {
       location,
-      breadcrumbNameMap: this.breadcrumbNameMap,
+      breadcrumbNameMap,
     };
   }
 
-  /**
-   * 获取面包屑映射
-   * @param {Object} menuData 菜单配置
-   */
-  getBreadcrumbNameMap() {
-    const routerMap = {};
-    const { menuData } = this.props;
-    const flattenMenuData = data => {
-      data.forEach(menuItem => {
-        if (menuItem.children) {
-          flattenMenuData(menuItem.children);
-        }
-        // Reduce memory usage
-        routerMap[menuItem.path] = menuItem;
-      });
-    };
-    flattenMenuData(menuData);
-    return routerMap;
-  }
-
-  matchParamsPath = pathname => {
-    const pathKey = Object.keys(this.breadcrumbNameMap).find(key =>
-      pathToRegexp(key).test(pathname)
-    );
-    return this.breadcrumbNameMap[pathKey];
+  matchParamsPath = (pathname, breadcrumbNameMap) => {
+    const pathKey = Object.keys(breadcrumbNameMap).find(key => pathToRegexp(key).test(pathname));
+    return breadcrumbNameMap[pathKey];
   };
 
-  getPageTitle = pathname => {
-    const currRouterData = this.matchParamsPath(pathname);
+  getRouteAuthority = (pathname, routeData) => {
+    const routes = routeData.slice(); // clone
+
+    const getAuthority = (routeDatas, path) => {
+      let authorities;
+      routeDatas.forEach(route => {
+        // check partial route
+        if (pathToRegexp(`${route.path}(.*)`).test(path)) {
+          if (route.authority) {
+            authorities = route.authority;
+          }
+          // is exact route?
+          if (!pathToRegexp(route.path).test(path) && route.routes) {
+            authorities = getAuthority(route.routes, path);
+          }
+        }
+      });
+      return authorities;
+    };
+
+    return getAuthority(routes, pathname);
+  };
+
+  getPageTitle = (pathname, breadcrumbNameMap) => {
+    const currRouterData = this.matchParamsPath(pathname, breadcrumbNameMap);
 
     if (!currRouterData) {
-      return 'Ant Design Pro';
+      return title;
     }
-    const pageName = formatMessage({
-      id: currRouterData.locale || currRouterData.name,
-      defaultMessage: currRouterData.name,
-    });
-    return `${pageName} - Ant Design Pro`;
+    const pageName = menu.disableLocal
+      ? currRouterData.name
+      : formatMessage({
+          id: currRouterData.locale || currRouterData.name,
+          defaultMessage: currRouterData.name,
+        });
+
+    return `${pageName} - ${title}`;
   };
 
   getLayoutStyle = () => {
@@ -140,14 +135,6 @@ class BasicLayout extends React.PureComponent {
       };
     }
     return null;
-  };
-
-  getContentStyle = () => {
-    const { fixedHeader } = this.props;
-    return {
-      margin: '24px 24px 0',
-      paddingTop: fixedHeader ? 64 : 0,
-    };
   };
 
   handleMenuCollapse = collapsed => {
@@ -175,9 +162,14 @@ class BasicLayout extends React.PureComponent {
       location: { pathname },
       isMobile,
       menuData,
+      breadcrumbNameMap,
+      route: { routes },
+      fixedHeader,
     } = this.props;
+
     const isTop = PropsLayout === 'topmenu';
-    const routerConfig = this.matchParamsPath(pathname);
+    const routerConfig = this.getRouteAuthority(pathname, routes);
+    const contentStyle = !fixedHeader ? { paddingTop: 0 } : {};
     const layout = (
       <Layout>
         {isTop && !isMobile ? null : (
@@ -203,11 +195,8 @@ class BasicLayout extends React.PureComponent {
             isMobile={isMobile}
             {...this.props}
           />
-          <Content style={this.getContentStyle()}>
-            <Authorized
-              authority={routerConfig && routerConfig.authority}
-              noMatch={<Exception403 />}
-            >
+          <Content className={styles.content} style={contentStyle}>
+            <Authorized authority={routerConfig} noMatch={<Exception403 />}>
               {children}
             </Authorized>
           </Content>
@@ -217,7 +206,7 @@ class BasicLayout extends React.PureComponent {
     );
     return (
       <React.Fragment>
-        <DocumentTitle title={this.getPageTitle(pathname)}>
+        <DocumentTitle title={this.getPageTitle(pathname, breadcrumbNameMap)}>
           <ContainerQuery query={query}>
             {params => (
               <Context.Provider value={this.getContext()}>
@@ -232,10 +221,11 @@ class BasicLayout extends React.PureComponent {
   }
 }
 
-export default connect(({ global, setting, menu }) => ({
+export default connect(({ global, setting, menu: menuModel }) => ({
   collapsed: global.collapsed,
   layout: setting.layout,
-  menuData: menu.menuData,
+  menuData: menuModel.menuData,
+  breadcrumbNameMap: menuModel.breadcrumbNameMap,
   ...setting,
 }))(props => (
   <Media query="(max-width: 599px)">
