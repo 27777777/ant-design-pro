@@ -41,6 +41,7 @@ const status = ['关闭', '运行中', '已上线', '异常'];
 
 const CreateForm = Form.create()(props => {
   const { modalVisible, form, handleAdd, handleModalVisible } = props;
+  // 通过子组件的form进行校验，使用父组件的函数调用接口。或者在子组件添加wrappedComponentRef属性，在父组件中获取子组件进行校验。
   const okHandle = () => {
     form.validateFields((err, fieldsValue) => {
       if (err) return;
